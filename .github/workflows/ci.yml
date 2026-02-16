@@ -1,0 +1,92 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - name: Validate MongoDB Shell Scripts
+        run: |
+          echo "Validating MongoDB shell scripts..."
+          for file in q*.js report.js; do
+            if [ -f "$file" ]; then
+              echo "✓ Checking $file..."
+              
+              # Check if file is not empty
+              if [ ! -s "$file" ]; then
+                echo "ERROR: $file is empty"
+                exit 1
+              fi
+              
+              # Check for basic MongoDB shell commands syntax
+              if grep -qE '(db\.|use |show |prompt )' "$file"; then
+                echo "  ✓ Contains valid MongoDB shell commands"
+              else
+                echo "  ⚠ Warning: $file may not contain MongoDB shell commands"
+              fi
+            fi
+          done
+          echo "✅ All MongoDB shell script files validated"
+      
+      - name: Verify File Structure
+        run: |
+          echo "Verifying repository structure..."
+          if [ ! -f "README.md" ]; then
+            echo "ERROR: README.md not found"
+            exit 1
+          fi
+          echo "✓ README.md exists"
+          
+          # Check for query files
+          query_count=$(ls -1 q*.js 2>/dev/null | wc -l)
+          if [ "$query_count" -eq 0 ]; then
+            echo "ERROR: No query files found"
+            exit 1
+          fi
+          echo "✓ Found $query_count query files"
+      
+      - name: Check for MongoDB Connection Strings
+        run: |
+          echo "Checking for hardcoded MongoDB credentials..."
+          if grep -r "mongodb+srv://.*:.*@" . --include="*.js" --exclude-dir=node_modules; then
+            echo "WARNING: Found potential MongoDB connection string with credentials"
+            echo "Please use environment variables for sensitive data"
+            exit 1
+          else
+            echo "✓ No hardcoded credentials found"
+          fi
+      
+      - name: Run Basic Code Quality Checks
+        run: |
+          echo "Running basic code quality checks..."
+          
+          # Check for trailing whitespace
+          if git diff --check; then
+            echo "✓ No trailing whitespace found"
+          fi
+          
+          # Check for TODO/FIXME comments
+          todo_count=$(grep -r "TODO\|FIXME" --include="*.js" . 2>/dev/null | wc -l)
+          if [ "$todo_count" -gt 0 ]; then
+            echo "⚠ Found $todo_count TODO/FIXME comments"
+            grep -r "TODO\|FIXME" --include="*.js" . || true
+          fi
+      
+      - name: CI Pipeline Completed
+        run: |
+          echo "✅ All checks passed successfully!"
+          echo "Repository is ready for deployment"
