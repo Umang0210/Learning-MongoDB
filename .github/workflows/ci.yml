@@ -1,92 +1,98 @@
-name: CI Pipeline
+name: MongoDB Query CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
+
+permissions:
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-      
-      - name: Validate MongoDB Shell Scripts
+        uses: actions/checkout@v4
+
+      - name: Verify repository files
         run: |
-          echo "Validating MongoDB shell scripts..."
-          for file in q*.js report.js; do
-            if [ -f "$file" ]; then
-              echo "✓ Checking $file..."
-              
-              # Check if file is not empty
-              if [ ! -s "$file" ]; then
-                echo "ERROR: $file is empty"
-                exit 1
-              fi
-              
-              # Check for basic MongoDB shell commands syntax
-              if grep -qE '(db\.|use |show |prompt )' "$file"; then
-                echo "  ✓ Contains valid MongoDB shell commands"
-              else
-                echo "  ⚠ Warning: $file may not contain MongoDB shell commands"
-              fi
+          set -euo pipefail
+
+          echo "Checking required files..."
+          [ -f README.md ] || { echo "ERROR: README.md not found"; exit 1; }
+          [ -f report.js ] || { echo "ERROR: report.js not found"; exit 1; }
+
+          query_count=$(find . -maxdepth 1 -type f -name 'q*.js' | wc -l)
+          if [ "$query_count" -eq 0 ]; then
+            echo "ERROR: No q*.js files found"
+            exit 1
+          fi
+
+          echo "✅ README.md and report.js found"
+          echo "✅ Found $query_count query files"
+
+      - name: Validate all JavaScript files are non-empty
+        run: |
+          set -euo pipefail
+
+          files=$(find . -maxdepth 1 -type f -name '*.js' | sort)
+          if [ -z "$files" ]; then
+            echo "ERROR: No .js files found in repository root"
+            exit 1
+          fi
+
+          echo "Validating non-empty .js files..."
+          for file in $files; do
+            if [ ! -s "$file" ]; then
+              echo "ERROR: $file is empty"
+              exit 1
+            fi
+            echo "✓ $file"
+          done
+
+      - name: Check MongoDB shell command presence
+        run: |
+          set -euo pipefail
+
+          echo "Checking MongoDB command patterns in all .js files..."
+          missing=0
+          for file in $(find . -maxdepth 1 -type f -name '*.js' | sort); do
+            if grep -qE 'db\.|\brs\.|^\s*use\s+|^\s*show\s+' "$file"; then
+              echo "✓ $file contains MongoDB shell patterns"
+            else
+              echo "⚠ $file does not contain common MongoDB shell patterns"
+              missing=$((missing + 1))
             fi
           done
-          echo "✅ All MongoDB shell script files validated"
-      
-      - name: Verify File Structure
+
+          echo "Completed pattern scan. Files without common patterns: $missing"
+
+      - name: Check for hardcoded MongoDB credentials
         run: |
-          echo "Verifying repository structure..."
-          if [ ! -f "README.md" ]; then
-            echo "ERROR: README.md not found"
+          set -euo pipefail
+
+          echo "Scanning for hardcoded MongoDB credentials..."
+          if grep -RInE 'mongodb(\+srv)?://[^\s/:]+:[^\s/@]+@' . --include='*.js' --exclude-dir=node_modules; then
+            echo "ERROR: Potential hardcoded MongoDB credentials found"
             exit 1
           fi
-          echo "✓ README.md exists"
-          
-          # Check for query files
-          query_count=$(ls -1 q*.js 2>/dev/null | wc -l)
-          if [ "$query_count" -eq 0 ]; then
-            echo "ERROR: No query files found"
-            exit 1
-          fi
-          echo "✓ Found $query_count query files"
-      
-      - name: Check for MongoDB Connection Strings
+
+          echo "✅ No hardcoded MongoDB credentials found"
+
+      - name: Check TODO and FIXME markers
         run: |
-          echo "Checking for hardcoded MongoDB credentials..."
-          if grep -r "mongodb+srv://.*:.*@" . --include="*.js" --exclude-dir=node_modules; then
-            echo "WARNING: Found potential MongoDB connection string with credentials"
-            echo "Please use environment variables for sensitive data"
-            exit 1
+          set -euo pipefail
+
+          count=$(grep -RInE 'TODO|FIXME' . --include='*.js' 2>/dev/null | wc -l || true)
+          if [ "$count" -gt 0 ]; then
+            echo "⚠ Found $count TODO/FIXME markers"
+            grep -RInE 'TODO|FIXME' . --include='*.js' || true
           else
-            echo "✓ No hardcoded credentials found"
+            echo "✅ No TODO/FIXME markers found"
           fi
-      
-      - name: Run Basic Code Quality Checks
-        run: |
-          echo "Running basic code quality checks..."
-          
-          # Check for trailing whitespace
-          if git diff --check; then
-            echo "✓ No trailing whitespace found"
-          fi
-          
-          # Check for TODO/FIXME comments
-          todo_count=$(grep -r "TODO\|FIXME" --include="*.js" . 2>/dev/null | wc -l)
-          if [ "$todo_count" -gt 0 ]; then
-            echo "⚠ Found $todo_count TODO/FIXME comments"
-            grep -r "TODO\|FIXME" --include="*.js" . || true
-          fi
-      
-      - name: CI Pipeline Completed
-        run: |
-          echo "✅ All checks passed successfully!"
-          echo "Repository is ready for deployment"
+
+      - name: CI completed
+        run: echo "✅ CI checks completed successfully"
